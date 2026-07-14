@@ -1,5 +1,5 @@
 server:
-  port: 9092
+  port: 9094
 
 spring:
   application:
@@ -22,3 +22,6 @@ ecp:
   session-ttl-minutes: 30
   # Горизонт генерации расписания, дней от сегодня (включительно).
   schedule-days: 14
+  # Demo-режим api/Person: неизвестный полис резолвится в первого пациента (900),
+  # как в WireMock-моке. false — строгий поиск (пустой data, если полис не совпал).
+  person-fallback: true

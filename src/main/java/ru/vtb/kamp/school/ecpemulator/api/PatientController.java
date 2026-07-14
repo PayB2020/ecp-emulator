@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import ru.vtb.kamp.school.ecpemulator.config.EmuProps;
 import ru.vtb.kamp.school.ecpemulator.domain.Model.Doctor;
 import ru.vtb.kamp.school.ecpemulator.domain.Model.Mo;
 import ru.vtb.kamp.school.ecpemulator.domain.Model.Patient;
@@ -21,14 +22,18 @@ import java.util.List;
 public class PatientController {
 
     private final Store store;
+    private final EmuProps props;
 
-    public PatientController(Store store) {
+    public PatientController(Store store, EmuProps props) {
         this.store = store;
+        this.props = props;
     }
 
     /**
-     * Поиск пациента: по Person_id, СНИЛС, полису ОМС (серия+номер двумя полями) или ФИО+дате рождения.
-     * Полис в ответе не возвращается. Без единого критерия — error_code=4.
+     * Поиск пациента: по Person_id, СНИЛС, полису ОМС (Polis_Num, опционально + Polis_Ser: у ЕНП
+     * серии нет) или ФИО+дате рождения. Полис в ответе не возвращается. Без единого критерия —
+     * error_code=4. При ecp.person-fallback=true неизвестный полис возвращает первого пациента
+     * (совместимость с WireMock-моком: задеплоенные фронты шлют произвольный ЕНП).
      */
     @GetMapping("/api/Person")
     public Envelope person(@RequestParam(name = "Person_id", required = false) String personId,
@@ -45,15 +50,16 @@ public class PatientController {
         if (!anyCriterion) {
             throw EcpError.badParam("Не заданы параметры поиска пациента");
         }
-        if ((polisSer == null) != (polisNum == null)) {
-            throw EcpError.badParam("Для поиска по полису ОМС нужны оба поля: Polis_Ser и Polis_Num");
+        if (polisSer != null && polisNum == null) {
+            throw EcpError.badParam("Для поиска по полису ОМС нужен номер Polis_Num (серия Polis_Ser без номера не принимается)");
         }
         LocalDate birth = birthDay == null ? null : Params.requireDate("PersonBirthDay_BirthDay", birthDay);
 
         List<PersonDto> data = store.patients().stream()
                 .filter(p -> personId == null || p.personId().equals(personId))
                 .filter(p -> snils == null || snils.equals(p.snils()))
-                .filter(p -> polisSer == null || (polisSer.equals(p.polisSer()) && polisNum.equals(p.polisNum())))
+                .filter(p -> polisNum == null || polisNum.equals(p.polisNum()))
+                .filter(p -> polisSer == null || polisSer.equals(p.polisSer()))
                 .filter(p -> surName == null || p.surName().equalsIgnoreCase(surName))
                 .filter(p -> firName == null || p.firName().equalsIgnoreCase(firName))
                 .filter(p -> secName == null || p.secName().equalsIgnoreCase(secName))
@@ -61,6 +67,10 @@ public class PatientController {
                 .filter(p -> lpuId == null || lpuId.equals(p.lpuId()))
                 .map(PatientController::toDto)
                 .toList();
+        if (data.isEmpty() && polisNum != null && props.personFallback()) {
+            // Demo-совместимость с WireMock-моком: любой полис резолвится в первого пациента.
+            data = List.of(toDto(store.patients().get(0)));
+        }
         return Envelope.ok(data);
     }
 

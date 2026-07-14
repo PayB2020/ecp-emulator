@@ -12,9 +12,18 @@
 ## Запуск
 
 ```bash
-mvn spring-boot:run                       # http://localhost:9092
+mvn spring-boot:run                       # http://localhost:9094
 # как drop-in вместо mock-ecp (профиль ecp у medicina-test смотрит на :9090):
 mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=9090
+```
+
+### Docker
+
+Jar собирается внутри образа (multi-stage) — на хосте нужны только Docker и git:
+
+```bash
+docker compose up --build -d              # http://localhost:9094
+docker compose logs -f ecp                # ждать «Tomcat started on port 9094»
 ```
 
 Требуется JDK 21. Копия контракта отдаётся самим приложением: `GET /openapi.yaml`.
@@ -42,6 +51,7 @@ mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=9090
 | `ecp.require-session` | `false` | требовать `sess_id`: без него `error_code=1`, просрочен — `2` (проверка авто-релогина клиента) |
 | `ecp.session-ttl-minutes` | `30` | TTL сессии |
 | `ecp.schedule-days` | `14` | горизонт расписания: 8 бирок в день (09:00–11:20, шаг 20 мин) на врача |
+| `ecp.person-fallback` | `true` | demo-режим: `api/Person` по неизвестному полису возвращает первого пациента (900), как WireMock-мок; `false` — строгий поиск |
 
 ## Проверка вручную
 

@@ -155,6 +155,14 @@ class EmulatorFlowTest {
                 .queryParam("PersonBirthDay_BirthDay", "1985-11-02"));
         assertThat(byFio.get("data").get(0).get("Person_id").asText()).isEqualTo("903");
 
+        // ЕНП: поиск по одному номеру, без серии
+        JsonNode byNum = call(get("/api/Person").queryParam("Polis_Num", "210987654321"));
+        assertThat(byNum.get("data").get(0).get("Person_id").asText()).isEqualTo("903");
+
+        // Demo-фолбэк: неизвестный полис резолвится в первого пациента (совместимость с mock-ecp)
+        JsonNode fallback = call(get("/api/Person").queryParam("Polis_Num", "0000000000000000"));
+        assertThat(fallback.get("data").get(0).get("Person_id").asText()).isEqualTo("900");
+
         JsonNode onlySer = call(get("/api/Person").queryParam("Polis_Ser", "9177"));
         assertThat(onlySer.get("error_code").asInt()).isEqualTo(4);
     }
