@@ -1,0 +1,482 @@
+openapi: 3.0.3
+info:
+  title: Партнерский API ЕЦП/ПроМед (РТ МИС)
+  version: 0.1.0
+  description: |
+    Партнёрский REST API ЕЦП/ПроМед (РТ МИС). Основано на «Интеграционные профили ЕЦП» IX.00-036 (ООО «РТ МИС»).
+
+    Соглашения:
+    - Входные параметры передаются в query-строке (в том числе для методов POST/PUT/DELETE).
+    - Ошибки двух уровней. HTTP-уровень — кодами: 401 (не передан/неверный apiKey), 404 (несуществующий
+      метод), 304 (Not Modified). Прикладной уровень — при HTTP 200: тело-конверт
+      `{error_code, error_msg, count, offset, data[]}`, признак ошибки — `error_code != 0` (0 — успех).
+    - Идентификаторы — числовые `_id`; даты в формате `ГГГГ-ММ-ДД` / `ГГГГ-ММ-ДД чч:мм:сс` (без таймзоны).
+  contact:
+    name: ВТБ Медицина
+
+servers:
+  # Локальный эмулятор (этот сервер) — первым, чтобы Swagger UI «Try it out» бил в него.
+  - url: /
+    description: ecp-emulator (локально)
+  - url: https://{host}
+    description: Точка доступа к ЕЦП/ПроМед
+    variables:
+      host:
+        default: ecp-gateway.example.ru
+        description: Хост шлюза доступа
+
+tags:
+  - name: doctors
+    description: Специальности, врачи, расписание
+  - name: appointments
+    description: Запись на приём
+  - name: patient
+    description: Профиль пациента и прикрепление
+  - name: reference
+    description: Справочники и медицинские организации
+
+paths:
+  /api/MedSpecOms/MedSpecOmsByMO:
+    get:
+      tags: [doctors]
+      summary: Специальности в МО
+      description: Специальности, доступные для записи в МО. `For_Record=1` добавляет счётчик свободных бирок.
+      parameters:
+        - { name: Lpu_id, in: query, required: true, schema: { type: string }, description: Код МО }
+        - { name: For_Record, in: query, required: false, schema: { type: integer, enum: [0, 1] } }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Список специальностей
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/MedSpecOms' } }
+
+  /api/MedStaffFact/MedStaffFactByMO:
+    get:
+      tags: [doctors]
+      summary: Врачи (места работы) в МО по специальности
+      parameters:
+        - { name: Lpu_id, in: query, required: true, schema: { type: string } }
+        - { name: MedSpecOms_id, in: query, required: false, schema: { type: string }, description: Специальность }
+        - { name: Post_id, in: query, required: false, schema: { type: string } }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Список врачей
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/MedStaffFact' } }
+
+  /api/TimeTableGraf/TimeTableGrafFreeDate:
+    get:
+      tags: [doctors]
+      summary: Свободные даты приёма врача
+      parameters:
+        - { name: MedStaffFact_id, in: query, required: true, schema: { type: string } }
+        - { name: TimeTableGraf_beg, in: query, required: true, schema: { type: string, format: date } }
+        - { name: TimeTableGraf_end, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Свободные даты
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            TimeTableGraf_begTime: { type: string, format: date, description: Свободная дата }
+
+  /api/TimeTableGraf/TimeTableGrafFreeTime:
+    get:
+      tags: [doctors]
+      summary: Свободные бирки (слоты) на дату
+      parameters:
+        - { name: MedStaffFact_id, in: query, required: true, schema: { type: string } }
+        - { name: TimeTableGraf_begTime, in: query, required: true, schema: { type: string, format: date }, description: Дата }
+        - { name: Person_id, in: query, required: false, schema: { type: string }, description: Необязателен (диспансерные бирки) }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Свободные бирки
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/FreeTime' } }
+
+  /api/TimeTableGraf/TimeTableGrafWrite:
+    post:
+      tags: [appointments]
+      summary: Бронь бирки (создание записи)
+      description: |
+        Ключ записи — пара `(Person_id, TimeTableGraf_id)`. Бирка блокируется на 15 минут.
+        Бизнес-ошибки в error_msg: «Пациент не найден в системе», «Не найдена свободная бирка»,
+        «Человек уже записан на данную бирку».
+      parameters:
+        - { name: Person_id, in: query, required: true, schema: { type: string } }
+        - { name: TimeTableGraf_id, in: query, required: true, schema: { type: string }, description: Свободная бирка }
+        - { name: EvnQueue_id, in: query, required: false, schema: { type: string }, description: Запись из листа ожидания }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Составной идентификатор записи
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            Person_id: { type: string }
+                            TimeTableGraf_id: { type: string }
+
+  /api/TimeTableListbyPatient:
+    get:
+      tags: [appointments]
+      summary: Предстоящие записи пациента
+      description: Возвращает ТОЛЬКО предстоящие визиты. История/отменённые этим методом не отдаются.
+      parameters:
+        - { name: Person_id, in: query, required: true, schema: { type: string } }
+        - { name: TimeTable_beg, in: query, required: false, schema: { type: string, format: date-time } }
+        - { name: TimeTable_end, in: query, required: false, schema: { type: string, format: date-time } }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Заголовок пациента + массив предстоящих визитов
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/PatientTimeTable' } }
+
+  /api/TimeTableGraf/TimeTableGrafStatus:
+    get:
+      tags: [appointments]
+      summary: Статус записи
+      description: "Статус записи. Значения EvnStatus_id: 12 — отменено, 13 — отклонено, 17 — записано."
+      parameters:
+        - { name: Person_id, in: query, required: true, schema: { type: string } }
+        - { name: TimeTableGraf_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Статус
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            EvnStatus_id: { type: string }
+                            EvnStatus_Name: { type: string }
+
+  /api/TimeTable:
+    delete:
+      tags: [appointments]
+      summary: Отмена записи (высвобождение бирки)
+      parameters:
+        - { name: TimeTable_id, in: query, required: true, schema: { type: string }, description: Идентификатор бирки }
+        - { name: TimeTableSource, in: query, required: true, schema: { type: string, enum: [Graf, MedService] } }
+        - { name: FailCause, in: query, required: true, schema: { type: integer }, description: Причина отмены (числовой идентификатор) }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Пустой data при успехе (error_code=0)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /api/Person:
+    get:
+      tags: [patient]
+      summary: Профиль/поиск пациента (по ФИО+ДР или по полису ОМС серия+номер)
+      description: |
+        Все параметры необязательны. Варианты поиска: по ФИО (`PersonSurName_SurName` + `PersonFirName_FirName`
+        [+ `PersonSecName_SecName`]) и дате рождения `PersonBirthDay_BirthDay`; по полису ОМС — СЕРИЯ
+        `Polis_Ser` + НОМЕР `Polis_Num` (двумя полями); по `PersonSnils_Snils` или `Person_id`. Полис в
+        ОТВЕТЕ не возвращается.
+      parameters:
+        - { name: Person_id, in: query, required: false, schema: { type: string }, description: Идентификатор пациента }
+        - { name: PersonSurName_SurName, in: query, required: false, schema: { type: string, maxLength: 50 }, description: Фамилия }
+        - { name: PersonFirName_FirName, in: query, required: false, schema: { type: string, maxLength: 50 }, description: Имя }
+        - { name: PersonSecName_SecName, in: query, required: false, schema: { type: string, maxLength: 50 }, description: Отчество }
+        - { name: PersonBirthDay_BirthDay, in: query, required: false, schema: { type: string, format: date }, description: Дата рождения }
+        - { name: PersonSnils_Snils, in: query, required: false, schema: { type: string, maxLength: 11 }, description: СНИЛС }
+        - { name: Polis_Ser, in: query, required: false, schema: { type: string, maxLength: 10 }, description: Серия полиса ОМС }
+        - { name: Polis_Num, in: query, required: false, schema: { type: string, maxLength: 15 }, description: Номер полиса ОМС }
+        - { name: Lpu_id, in: query, required: false, schema: { type: string }, description: Идентификатор МО }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Профиль
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: '#/components/schemas/Person' } }
+
+  /api/PersonMainAttach:
+    get:
+      tags: [patient]
+      summary: "Основное прикрепление пациента (МО: id+название+адрес)"
+      parameters:
+        - { name: Person_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Прикрепление
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            Lpu_id: { type: string }
+                            Lpu_Name: { type: string }
+                            PAddress_Address: { type: string, description: Фактический адрес подразделения }
+                            MedStaffFact_id: { type: string, description: Участковый врач }
+                            MedStaffFact_Fio: { type: string }
+
+  /api/Refbook:
+    get:
+      tags: [reference]
+      summary: Элементы справочника (id → Name)
+      description: |
+        Справочник задаётся СТРОКОЙ `Refbook_Code` (`dbo.<Имя>` или OID НСИ). Без `id` возвращает весь
+        справочник. Используется для имён специальности (`dbo.MedSpecOms`), должности (`dbo.Post`),
+        профиля отделения (`dbo.LpuSectionProfile`), услуги (`dbo.UslugaComplex`), типа бирки (`dbo.TimeTableType`).
+      parameters:
+        - { name: Refbook_Code, in: query, required: true, schema: { type: string }, description: 'Напр. dbo.MedSpecOms' }
+        - { name: id, in: query, required: false, schema: { type: string }, description: Фильтр по элементу }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Элементы справочника
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string }
+                            Name: { type: string }
+                            Code: { type: string }
+                            BegDate: { type: string, format: date }
+                            EndDate: { type: string, format: date }
+
+  /api/MO:
+    get:
+      tags: [reference]
+      summary: Медицинская организация (название + адрес) по Lpu_id
+      parameters:
+        - { name: Lpu_id, in: query, required: false, schema: { type: string } }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: МО
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            Lpu_id: { type: string }
+                            Lpu_Nick: { type: string, description: Краткое название }
+                            Lpu_Name: { type: string, description: Полное название }
+                            UAddress_Address: { type: string, description: Юридический адрес }
+                            PAddress_Address: { type: string, description: Фактический адрес }
+
+  /api/rish/MedStaffFact/getDoctorInfo:
+    get:
+      tags: [reference]
+      summary: Данные врача (ФИО, специальность, должность)
+      parameters:
+        - { name: MedStaffFact_id, in: query, required: true, schema: { type: string } }
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '200':
+          description: Данные врача
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            Fio: { type: string, description: ФИО врача }
+                            MedSpecOms_Name: { type: string }
+                            Dolgnost_Name: { type: string, description: Должность }
+
+components:
+  responses:
+    Unauthorized:
+      description: '401 — не передан или неверный apiKey (HTTP-уровень, без конверта)'
+    NotFound:
+      description: '404 — обращение к несуществующему методу (HTTP-уровень)'
+    NotModified:
+      description: '304 — данные не изменялись (If-Modified-Since; тело пустое)'
+  schemas:
+    Envelope:
+      type: object
+      description: |
+        Общий конверт ответа ЕЦП (HTTP всегда 200). Признак ошибки — `error_code != 0`:
+        1 — нет сессии, 2 — сессия просрочена, 3 — нет обязательного параметра, 4 — ошибка параметров,
+        5 — демо-запись; прочие бизнес-ошибки приходят с текстом в `error_msg`.
+      properties:
+        error_code: { type: integer, description: '0 — успех; иначе код ошибки' }
+        error_msg: { type: string, nullable: true }
+        count: { type: integer, nullable: true }
+        offset: { type: integer, nullable: true }
+        data: { type: array, items: { type: object }, description: Полезная нагрузка (переопределяется в методах) }
+      required: [error_code]
+
+    MedSpecOms:
+      type: object
+      description: Специальность в медицинской организации.
+      properties:
+        MedSpecOms_id: { type: string }
+        MedSpecClass_Name: { type: string, nullable: true, description: Региональное имя (может отсутствовать) }
+        TimetableGraf_Count: { type: integer, nullable: true, description: Счётчик бирок (при For_Record=1) }
+
+    MedStaffFact:
+      type: object
+      description: Место работы врача в медицинской организации.
+      properties:
+        MedStaffFact_id: { type: string }
+        Person_id: { type: string }
+        PersonSurName_SurName: { type: string }
+        PersonFirName_FirName: { type: string }
+        PersonSecName_SecName: { type: string }
+        Post_id: { type: string, description: Должность (id; имя — через dbo.Post) }
+        Lpu_id: { type: string }
+        LpuSection_id: { type: string }
+        TimetableGraf_Count: { type: integer, nullable: true }
+
+    FreeTime:
+      type: object
+      description: Свободная бирка (слот) приёма.
+      properties:
+        TimeTableGraf_id: { type: string }
+        TimeTableGraf_begTime: { type: string, description: 'Дата-время ГГГГ-ММ-ДД чч:мм:сс' }
+        TimeTableGraf_Time: { type: integer, nullable: true, description: "Длительность приёма, мин" }
+
+    PatientTimeTable:
+      type: object
+      description: Заголовок пациента + предстоящие визиты.
+      properties:
+        Person_id: { type: string }
+        TimeTable:
+          type: array
+          items:
+            type: object
+            properties:
+              TimeTable_id: { type: string }
+              TimeTable_begTime: { type: string, description: Начало приёма (DT) }
+              TimeTable_factTime: { type: string, nullable: true, description: Факт. приход (был на приёме) }
+              Lpu_id: { type: string }
+              MedStaffFact_id: { type: string }
+              Post_Name: { type: string, nullable: true }
+              MedService_Name: { type: string, nullable: true }
+              Usluga_Name: { type: string, nullable: true }
+              TimeTableSource: { type: string, enum: [Graf, MedService] }
+
+    Person:
+      type: object
+      description: Профиль пациента. Полис в ответе не возвращается.
+      properties:
+        Person_id: { type: string }
+        PersonSurName_SurName: { type: string }
+        PersonFirName_FirName: { type: string }
+        PersonSecName_SecName: { type: string }
+        PersonBirthDay_BirthDay: { type: string, format: date }
+        Person_Sex_id: { type: string, description: Пол (id справочника) }
+        PersonPhone_Phone: { type: string, nullable: true, description: 10 цифр }
+        PersonSnils_Snils: { type: string, nullable: true }
+        Lpu_id: { type: string, nullable: true, description: Идентификатор МО прикрепления }

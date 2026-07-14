@@ -1,0 +1,24 @@
+server:
+  port: 9092
+
+spring:
+  application:
+    name: ecp-emulator
+
+# Swagger UI поверх готового контракта (contract-first): /swagger-ui.html рендерит /openapi.yaml.
+# Источник истины — ecp-api/openapi.yaml; сгенерированный /v3/api-docs в UI не используется
+# (его отключение погасило бы и сам Swagger UI).
+springdoc:
+  swagger-ui:
+    url: /openapi.yaml
+
+ecp:
+  # Ожидаемый apiKey. Пустая строка — принимается ЛЮБОЙ непустой apiKey (удобно для локалки).
+  api-key: ""
+  # true — методы (кроме login) требуют действующий sess_id: без него error_code=1,
+  # с неизвестным/просроченным — error_code=2 (проверка авто-релогина клиента).
+  require-session: false
+  # Время жизни сессии, минут.
+  session-ttl-minutes: 30
+  # Горизонт генерации расписания, дней от сегодня (включительно).
+  schedule-days: 14
